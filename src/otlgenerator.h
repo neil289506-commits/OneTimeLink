@@ -5,6 +5,7 @@
 #include "linkbuilder.h"
 #include <QString>
 #include <QByteArray>
+#include <QNetworkAccessManager>
 #include <memory>
 
 /**
@@ -57,6 +58,7 @@ public:
 private:
     std::unique_ptr<CryptoEngine> m_cryptoEngine;
     std::unique_ptr<LinkBuilder> m_linkBuilder;
+    QNetworkAccessManager m_networkManager;
     
     QString m_cloudflareBaseUrl;
     QByteArray m_publicKey;

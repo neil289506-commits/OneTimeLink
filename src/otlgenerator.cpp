@@ -1,6 +1,11 @@
 #include "otlgenerator.h"
 #include <QUrl>
 #include <QUuid>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QEventLoop>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <QDebug>
 
 OTLGenerator::OTLGenerator(const QString &cloudflareBaseUrl)
@@ -106,7 +111,7 @@ OTLGenerator::GeneratedLink OTLGenerator::generateLinkWithToken(const QString &t
         result.encryptedToken = token.toUtf8();
     }
     
-    // 步驟 4: 構建完整連結
+    // 步驟 4: 構建完整連結 (本地加密格式保留)
     result.oneTimeLink = m_linkBuilder->buildLink(
         m_cloudflareBaseUrl,
         result.encryptedUrl,
@@ -119,6 +124,43 @@ OTLGenerator::GeneratedLink OTLGenerator::generateLinkWithToken(const QString &t
         m_lastError = result.error;
         return result;
     }
+    
+    // 步驟 5: 請求 Cloudflare Workers API 註冊 Token 並獲取最終跳轉連結
+    QString apiUrl = m_cloudflareBaseUrl;
+    if (apiUrl.endsWith('/')) {
+        apiUrl.chop(1);
+    }
+    apiUrl += "/api/tokens/create";
+    
+    QNetworkRequest request((QUrl(apiUrl)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    
+    QJsonObject jsonObj;
+    jsonObj["targetUrl"] = targetUrl;
+    jsonObj["expirationSeconds"] = 3600;
+    jsonObj["token"] = token; // 將 UUID 同步給後端
+    
+    QJsonDocument doc(jsonObj);
+    QByteArray postData = doc.toJson();
+    
+    QEventLoop loop;
+    QNetworkReply *reply = m_networkManager.post(request, postData);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+    
+    if (reply->error() == QNetworkReply::NoError) {
+        QByteArray responseData = reply->readAll();
+        QJsonDocument responseDoc = QJsonDocument::fromJson(responseData);
+        if (responseDoc.isObject() && responseDoc.object()["success"].toBool()) {
+            // 成功註冊後，將回傳的 Cloudflare API 網址覆蓋成本次產生的連結
+            result.oneTimeLink = responseDoc.object()["redirectUrl"].toString();
+        } else {
+            qWarning() << "API 回應錯誤，退回使用本地端生成的連結格式";
+        }
+    } else {
+        qWarning() << "網路請求失敗: " << reply->errorString() << "，退回使用本地端生成的連結格式";
+    }
+    reply->deleteLater();
     
     return result;
 }
